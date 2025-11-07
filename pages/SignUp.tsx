@@ -1,6 +1,6 @@
-import React, { useState, useContext } from 'react';
-import { DataContext } from '../App';
-import { Role, VehicleType } from '../types';
+import React, { useState } from 'react';
+import { supabase } from '../App';
+import { Role, VehicleType, ApprovalStatus } from '../types';
 
 interface SignUpProps {
     onNavigateToLogin: () => void;
@@ -15,7 +15,7 @@ const FileInput: React.FC<{ label: string; id: string; required?: boolean; onCha
 
 
 const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
-    const { addUser } = useContext(DataContext);
+    const [loading, setLoading] = useState(false);
     const [role, setRole] = useState<Role>(Role.RESIDENT);
     const [formData, setFormData] = useState({
         name: '',
@@ -23,51 +23,97 @@ const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
         phone: '',
         address: '',
         password: '',
-        operatesOutsideEstate: false,
-        businessName: '',
-        vehicleLicencePlate: '',
-        vehicleType: VehicleType.MOTORCYCLE,
+        operates_outside_estate: false,
+        business_name: '',
+        vehicle_licence_plate: '',
+        vehicle_type: VehicleType.MOTORCYCLE,
     });
     const [files, setFiles] = useState<{[key: string]: File | null}>({});
 
-    // FIX: Correctly handle change events from various input elements.
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-        const target = e.target;
-        const name = target.name;
-
-        // Use a type guard to check if the element is a checkbox.
-        // If so, use its `checked` property for the value. Otherwise, use `value`.
-        if (target instanceof HTMLInputElement && target.type === 'checkbox') {
-            setFormData(prev => ({ ...prev, [name]: target.checked }));
-        } else {
-            setFormData(prev => ({ ...prev, [name]: target.value }));
-        }
+        const { name, value, type } = e.target;
+        const isCheckbox = type === 'checkbox' && e.target instanceof HTMLInputElement;
+        setFormData(prev => ({ ...prev, [name]: isCheckbox ? (e.target as HTMLInputElement).checked : value }));
     };
     
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, fileKey: string) => {
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
-           setFiles(prev => ({...prev, [fileKey]: e.target.files![0]}));
+           setFiles(prev => ({...prev, [e.target.name]: e.target.files![0]}));
         }
     };
     
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const userPayload: any = { ...formData, role };
+        setLoading(true);
+
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+            email: formData.email,
+            password: formData.password,
+        });
+
+        if (authError || !authData.user) {
+            alert('Error signing up: ' + authError?.message);
+            setLoading(false);
+            return;
+        }
         
-        // Create placeholder URLs for all uploaded files for demo purposes
+        const user = authData.user;
+        
+        // Start with common fields for all users
+        const userPayload: any = {
+            id: user.id,
+            email: user.email,
+            name: formData.name,
+            phone: formData.phone,
+            address: formData.address,
+            role,
+            approval_status: ApprovalStatus.PENDING,
+            lat: 6.5244 + (Math.random() - 0.5) * 0.01,
+            lng: 3.3792 + (Math.random() - 0.5) * 0.01,
+        };
+    
+        // Add role-specific fields
+        switch (role) {
+            case Role.STORE:
+                userPayload.business_name = formData.business_name;
+                userPayload.operates_outside_estate = formData.operates_outside_estate;
+                break;
+            case Role.DISPATCH_RIDER:
+                userPayload.vehicle_licence_plate = formData.vehicle_licence_plate;
+                userPayload.vehicle_type = formData.vehicle_type;
+                userPayload.operates_outside_estate = formData.operates_outside_estate;
+                break;
+            case Role.SERVICE_PROVIDER:
+                userPayload.operates_outside_estate = formData.operates_outside_estate;
+                break;
+            case Role.RESIDENT:
+                userPayload.operates_outside_estate = false;
+                break;
+        }
+
         for (const key in files) {
-            if(files[key]){
-                userPayload[`${key}Url`] = URL.createObjectURL(files[key]!);
+            const file = files[key];
+            if (file) {
+                const filePath = `${user.id}/${key}_${file.name}`;
+                const { error: uploadError } = await supabase.storage.from('user_assets').upload(filePath, file);
+                if (uploadError) {
+                    console.error(`Error uploading ${key}:`, uploadError);
+                } else {
+                    const { data: { publicUrl } } = supabase.storage.from('user_assets').getPublicUrl(filePath);
+                    userPayload[`${key}_url`] = publicUrl;
+                }
             }
         }
-        // Special case for photo/logo
-        if (files.photo) {
-             userPayload.photoUrl = URL.createObjectURL(files.photo);
-        }
+        
+        const { error: profileError } = await supabase.from('profiles').insert(userPayload);
 
-        addUser(userPayload);
-        alert('Registration successful! Your account is now awaiting admin approval.');
-        onNavigateToLogin();
+        if (profileError) {
+            alert('Error creating profile: ' + profileError.message);
+        } else {
+            alert('Registration successful! Please check your email to verify your account. Your account will then be reviewed by an admin.');
+            onNavigateToLogin();
+        }
+        setLoading(false);
     };
 
     const Logo = () => (
@@ -121,8 +167,8 @@ const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
 
                         {role === Role.STORE && (
                              <div>
-                                <label htmlFor="businessName" className="block text-sm font-medium text-gray-700">Business Name</label>
-                                <input id="businessName" name="businessName" type="text" required onChange={handleInputChange} className="mt-1 appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-brand-primary focus:border-brand-primary sm:text-sm" />
+                                <label htmlFor="business_name" className="block text-sm font-medium text-gray-700">Business Name</label>
+                                <input id="business_name" name="business_name" type="text" required onChange={handleInputChange} className="mt-1 appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-brand-primary focus:border-brand-primary sm:text-sm" />
                             </div>
                         )}
 
@@ -157,12 +203,12 @@ const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
                         {role === Role.DISPATCH_RIDER && (
                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label htmlFor="vehicleLicencePlate" className="block text-sm font-medium text-gray-700">Vehicle Licence Plate No.</label>
-                                    <input id="vehicleLicencePlate" name="vehicleLicencePlate" type="text" required onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
+                                    <label htmlFor="vehicle_licence_plate" className="block text-sm font-medium text-gray-700">Vehicle Licence Plate No.</label>
+                                    <input id="vehicle_licence_plate" name="vehicle_licence_plate" type="text" required onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
                                 </div>
                                 <div>
-                                    <label htmlFor="vehicleType" className="block text-sm font-medium text-gray-700">Type of Vehicle</label>
-                                    <select id="vehicleType" name="vehicleType" required onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-brand-primary focus:border-brand-primary sm:text-sm">
+                                    <label htmlFor="vehicle_type" className="block text-sm font-medium text-gray-700">Type of Vehicle</label>
+                                    <select id="vehicle_type" name="vehicle_type" required onChange={handleInputChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-brand-primary focus:border-brand-primary sm:text-sm">
                                         {Object.values(VehicleType).map(v => <option key={v} value={v}>{v}</option>)}
                                     </select>
                                 </div>
@@ -172,10 +218,10 @@ const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
                         {[Role.DISPATCH_RIDER, Role.STORE, Role.SERVICE_PROVIDER].includes(role) && (
                             <div className="flex items-start">
                                 <div className="flex items-center h-5">
-                                    <input id="operatesOutsideEstate" name="operatesOutsideEstate" type="checkbox" onChange={handleInputChange} className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-300 rounded" />
+                                    <input id="operates_outside_estate" name="operates_outside_estate" type="checkbox" onChange={handleInputChange} className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-300 rounded" />
                                 </div>
                                 <div className="ml-3 text-sm">
-                                    <label htmlFor="operatesOutsideEstate" className="font-medium text-gray-700">I operate from outside the estate</label>
+                                    <label htmlFor="operates_outside_estate" className="font-medium text-gray-700">I operate from outside the estate</label>
                                 </div>
                             </div>
                         )}
@@ -184,32 +230,32 @@ const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
                         <div className="space-y-4 border-t pt-6">
                              <h3 className="text-lg font-medium text-gray-900">Verification Documents</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                               <FileInput label={role === Role.STORE ? 'Business Logo' : 'Profile Photo'} id="photo" required onChange={(e) => handleFileChange(e, 'photo')} accept="image/*" />
+                               <FileInput label={role === Role.STORE ? 'Business Logo' : 'Profile Photo'} id="photo" required onChange={handleFileChange} accept="image/*" />
                                
                                {/* Resident Uploads */}
                                {role === Role.RESIDENT && <>
-                                   <FileInput label="Means of Identification" id="meansOfId" required onChange={(e) => handleFileChange(e, 'meansOfId')} accept=".pdf,.jpg,.jpeg,.png" />
-                                   <FileInput label="Proof of Address" id="proofOfAddress" required onChange={(e) => handleFileChange(e, 'proofOfAddress')} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Means of Identification" id="means_of_id" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Proof of Address" id="proof_of_address" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
                                </>}
                                
                                {/* Rider Uploads */}
                                {role === Role.DISPATCH_RIDER && <>
-                                   <FileInput label="Driver's Licence" id="driverLicence" required onChange={(e) => handleFileChange(e, 'driverLicence')} accept=".pdf,.jpg,.jpeg,.png" />
-                                   <FileInput label="Proof of Vehicle Ownership" id="vehicleOwnership" required onChange={(e) => handleFileChange(e, 'vehicleOwnership')} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Driver's Licence" id="driver_licence" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Proof of Vehicle Ownership" id="vehicle_ownership" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
                                </>}
 
                                {/* Store Uploads */}
                                {role === Role.STORE && <>
-                                   <FileInput label="Certificate of Incorporation" id="incorporationCert" required onChange={(e) => handleFileChange(e, 'incorporationCert')} accept=".pdf,.jpg,.jpeg,.png" />
-                                   <FileInput label="Owner's Means of ID" id="meansOfId" required onChange={(e) => handleFileChange(e, 'meansOfId')} accept=".pdf,.jpg,.jpeg,.png" />
-                                   <FileInput label="Proof of Business Address" id="storeOwnership" required onChange={(e) => handleFileChange(e, 'storeOwnership')} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Certificate of Incorporation" id="incorporation_cert" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Owner's Means of ID" id="means_of_id" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Proof of Business Address" id="store_ownership" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
                                </>}
 
                                {/* Service Provider Uploads */}
                                {role === Role.SERVICE_PROVIDER && <>
-                                   <FileInput label="Trade/Skill Licence" id="tradeLicence" required onChange={(e) => handleFileChange(e, 'tradeLicence')} accept=".pdf,.jpg,.jpeg,.png" />
-                                   <FileInput label="Means of Identification" id="meansOfId" required onChange={(e) => handleFileChange(e, 'meansOfId')} accept=".pdf,.jpg,.jpeg,.png" />
-                                   <FileInput label="Proof of Residence" id="residenceProof" required onChange={(e) => handleFileChange(e, 'residenceProof')} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Trade/Skill Licence" id="trade_licence" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Means of Identification" id="means_of_id" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+                                   <FileInput label="Proof of Residence" id="residence_proof" required onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
                                </>}
                             </div>
                         </div>
@@ -218,9 +264,10 @@ const SignUp: React.FC<SignUpProps> = ({ onNavigateToLogin }) => {
                         <div>
                             <button
                                 type="submit"
-                                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-brand-primary hover:bg-brand-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-primary"
+                                disabled={loading}
+                                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-brand-primary hover:bg-brand-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-primary disabled:opacity-50"
                             >
-                                Create Account
+                                {loading ? 'Creating Account...' : 'Create Account'}
                             </button>
                         </div>
                     </form>

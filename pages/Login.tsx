@@ -1,5 +1,5 @@
-import React, { useContext } from 'react';
-import { AuthContext } from '../App';
+import React, { useState } from 'react';
+import { supabase } from '../App';
 import { DeliveryIcon, GatePassIcon, UsersIcon, DocumentTextIcon, CheckCircleIcon } from '../components/icons';
 
 interface LoginProps {
@@ -7,10 +7,26 @@ interface LoginProps {
 }
 
 const Login: React.FC<LoginProps> = ({ onNavigateToSignUp }) => {
-    const { login } = useContext(AuthContext);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    
+    const handleQuickLogin = async (email: string) => {
+        setLoading(true);
+        setError(null);
+        // For demo purposes, all mock users have the same password.
+        const { error } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: 'password123', 
+        });
 
-    const handleQuickLogin = (email: string) => {
-        login(email);
+        if (error) {
+            setError(error.message);
+            // Check if user doesn't exist to provide a helpful hint
+            if (error.message.includes("Invalid login credentials")) {
+                 setError("Login failed. Hint: Did you sign up this user first with the password 'password123'?");
+            }
+        }
+        setLoading(false);
     };
 
     const handleScrollToLogin = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -182,15 +198,16 @@ const Login: React.FC<LoginProps> = ({ onNavigateToSignUp }) => {
             <section id="login" className="py-16 md:py-20 px-4 md:px-8 bg-gray-50">
                 <div className="container mx-auto text-center max-w-3xl">
                     <h2 className="text-3xl md:text-4xl font-bold mb-4">Quick Access Demo</h2>
-                    <p className="text-gray-600 mb-10">For demonstration purposes, please select a role to enter the application. New users should create an account first.</p>
+                    <p className="text-gray-600 mb-10">Select a role to log in. Please ensure you have created these users via the Sign Up page first, using 'password123' as the password.</p>
+                    {error && <p className="text-red-500 mb-4 bg-red-100 p-3 rounded-lg">{error}</p>}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <button onClick={() => handleQuickLogin('chinedu@email.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1">Resident</button>
-                        <button onClick={() => handleQuickLogin('musa@rider.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1">Rider</button>
-                        <button onClick={() => handleQuickLogin('mama.chi@store.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1">Store</button>
-                        <button onClick={() => handleQuickLogin('fixit@services.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1">Service Provider</button>
+                        <button disabled={loading} onClick={() => handleQuickLogin('chinedu@email.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50">Resident</button>
+                        <button disabled={loading} onClick={() => handleQuickLogin('musa@rider.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50">Rider</button>
+                        <button disabled={loading} onClick={() => handleQuickLogin('mama.chi@store.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50">Store</button>
+                        <button disabled={loading} onClick={() => handleQuickLogin('fixit@services.com')} className="bg-white text-brand-primary font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg border border-gray-200 hover:border-brand-primary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50">Service Provider</button>
                     </div>
                     <div className="mt-6 flex justify-center">
-                        <button onClick={() => handleQuickLogin('admin@estate.com')} className="w-full md:w-1/2 bg-brand-dark text-white font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg hover:bg-gray-700 transition-all duration-300 transform hover:-translate-y-1">Estate Admin</button>
+                        <button disabled={loading} onClick={() => handleQuickLogin('admin@estate.com')} className="w-full md:w-1/2 bg-brand-dark text-white font-bold py-4 px-2 rounded-lg shadow-md hover:shadow-lg hover:bg-gray-700 transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50">Estate Admin</button>
                     </div>
                 </div>
             </section>

@@ -1,6 +1,6 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { AuthContext, DataContext } from '../App';
-import { User, Role, DeliveryRequest, DeliveryStatus, GatePass, GatePassStatus, Conversation, Message, RiderUser, ApprovalStatus } from '../types';
+import { AuthContext, DataContext, supabase } from '../App';
+import { User, Role, DeliveryRequest, DeliveryStatus, GatePass, GatePassStatus, Conversation, Message, ApprovalStatus } from '../types';
 import { HomeIcon, DeliveryIcon, GatePassIcon, ChatIcon, ProfileIcon, LogoutIcon, StoreIcon, ServiceIcon, RiderIcon, QrCodeIcon, ClockIcon, CheckCircleIcon, XCircleIcon, SendIcon, ReadReceiptIcon } from '../components/icons';
 
 // Utility Functions
@@ -81,15 +81,15 @@ const Dashboard: React.FC = () => {
 
     const dataContext = useContext(DataContext);
 
-    const startChat = (targetUser: User) => {
+    const startChat = async (targetUser: User) => {
         if (!currentUser) return;
         const { conversations, addConversation } = dataContext;
-        const existingConv = conversations.find(c => c.participantIds.includes(currentUser.id) && c.participantIds.includes(targetUser.id));
+        const existingConv = conversations.find(c => c.participant_ids.includes(currentUser.id) && c.participant_ids.includes(targetUser.id));
         if (existingConv) {
             setActiveConversation(existingConv);
         } else {
-            const newConv = addConversation([currentUser.id, targetUser.id]);
-            setActiveConversation(newConv);
+            const newConv = await addConversation([currentUser.id, targetUser.id]);
+            if (newConv) setActiveConversation(newConv);
         }
         setActiveView('chat');
     };
@@ -139,7 +139,7 @@ const Dashboard: React.FC = () => {
             <main className="flex-1 flex flex-col overflow-hidden">
                 <header className="md:hidden h-16 bg-white border-b flex justify-between items-center px-4">
                     <h1 className="text-xl font-bold text-brand-primary">EstateHub</h1>
-                    <img src={currentUser.photoUrl} alt={currentUser.name} className="h-8 w-8 rounded-full object-cover" />
+                    <img src={currentUser.photo_url} alt={currentUser.name} className="h-8 w-8 rounded-full object-cover" />
                 </header>
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6">
                     {renderView()}
@@ -179,7 +179,7 @@ const HomeView = () => {
     return (
         <div>
             <div className="flex items-center space-x-4 mb-6">
-                <img src={currentUser.photoUrl} alt={currentUser.name} className="h-16 w-16 rounded-full object-cover"/>
+                <img src={currentUser.photo_url} alt={currentUser.name} className="h-16 w-16 rounded-full object-cover"/>
                 <div>
                     <h1 className="text-2xl font-bold text-gray-800">Welcome back, {currentUser.name.split(' ')[0]}!</h1>
                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getRoleClass(currentUser.role)}`}>{currentUser.role}</span>
@@ -192,7 +192,7 @@ const HomeView = () => {
                         <div key={ann.id} className="border-l-4 border-brand-primary pl-4">
                             <h3 className="font-bold">{ann.title}</h3>
                             <p className="text-gray-600">{ann.content}</p>
-                            <p className="text-xs text-gray-400 mt-1">{new Date(ann.createdAt).toLocaleString()}</p>
+                            <p className="text-xs text-gray-400 mt-1">{new Date(ann.created_at).toLocaleString()}</p>
                         </div>
                     ))}
                 </div>
@@ -206,20 +206,20 @@ const DeliveriesView: React.FC<{ startChat: (user: User) => void }> = ({ startCh
     const { deliveryRequests, updateDeliveryRequest, users } = useContext(DataContext);
     const [activeTab, setActiveTab] = useState(currentUser?.role === Role.DISPATCH_RIDER ? 'available' : 'my_requests');
 
-    if (!currentUser) return null;
+    if (!currentUser || !deliveryRequests || !users) return <div>Loading deliveries...</div>;
 
     // Rider's View
     if (currentUser.role === Role.DISPATCH_RIDER) {
-        const myJobs = deliveryRequests.filter(d => d.riderId === currentUser.id && d.status !== DeliveryStatus.COMPLETED && d.status !== DeliveryStatus.CANCELLED);
+        const myJobs = deliveryRequests.filter(d => d.rider_id === currentUser.id && d.status !== DeliveryStatus.COMPLETED && d.status !== DeliveryStatus.CANCELLED);
         const availableJobs = deliveryRequests.filter(d => d.status === DeliveryStatus.PENDING)
             .sort((a, b) => {
-                const distA = haversineDistance(currentUser.lat, currentUser.lng, a.pickupLat, a.pickupLng);
-                const distB = haversineDistance(currentUser.lat, currentUser.lng, b.pickupLat, b.pickupLng);
+                const distA = haversineDistance(currentUser.lat, currentUser.lng, a.pickup_lat, a.pickup_lng);
+                const distB = haversineDistance(currentUser.lat, currentUser.lng, b.pickup_lat, b.pickup_lng);
                 return distA - distB;
             });
 
         const handleAcceptJob = (req: DeliveryRequest) => {
-            updateDeliveryRequest({ ...req, riderId: currentUser.id, riderName: currentUser.name, status: DeliveryStatus.ACCEPTED });
+            updateDeliveryRequest({ ...req, rider_id: currentUser.id, rider_name: currentUser.name, status: DeliveryStatus.ACCEPTED });
         }
         const handleUpdateStatus = (req: DeliveryRequest, status: DeliveryStatus) => {
             updateDeliveryRequest({ ...req, status });
@@ -239,10 +239,10 @@ const DeliveriesView: React.FC<{ startChat: (user: User) => void }> = ({ startCh
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <p className="font-bold">{req.description}</p>
-                                        <p className="text-sm text-gray-500">From: {req.pickupAddress}</p>
-                                        <p className="text-sm text-gray-500">To: {req.dropoffAddress}</p>
-                                        <p className="text-sm text-gray-500">By: {req.requesterName}</p>
-                                        <p className="text-xs text-blue-600 font-semibold mt-1">~{haversineDistance(currentUser.lat, currentUser.lng, req.pickupLat, req.pickupLng).toFixed(2)} km away</p>
+                                        <p className="text-sm text-gray-500">From: {req.pickup_address}</p>
+                                        <p className="text-sm text-gray-500">To: {req.dropoff_address}</p>
+                                        <p className="text-sm text-gray-500">By: {req.requester_name}</p>
+                                        <p className="text-xs text-blue-600 font-semibold mt-1">~{haversineDistance(currentUser.lat, currentUser.lng, req.pickup_lat, req.pickup_lng).toFixed(2)} km away</p>
                                     </div>
                                     <button onClick={() => handleAcceptJob(req)} className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold">Accept</button>
                                 </div>
@@ -253,15 +253,15 @@ const DeliveriesView: React.FC<{ startChat: (user: User) => void }> = ({ startCh
                 {activeTab === 'my_jobs' && (
                      <div className="space-y-4">
                         {myJobs.map(req => {
-                            const requester = users.find(u => u.id === req.requesterId);
+                            const requester = users.find(u => u.id === req.requester_id);
                             return (
                                 <div key={req.id} className="bg-white p-4 rounded-lg shadow-md">
                                      <div className="flex justify-between items-start">
                                         <div>
                                             <p className="font-bold">{req.description}</p>
-                                            <p className="text-sm text-gray-500">From: {req.pickupAddress}</p>
-                                            <p className="text-sm text-gray-500">To: {req.dropoffAddress}</p>
-                                            <p className="text-sm text-gray-500">By: {req.requesterName}</p>
+                                            <p className="text-sm text-gray-500">From: {req.pickup_address}</p>
+                                            <p className="text-sm text-gray-500">To: {req.dropoff_address}</p>
+                                            <p className="text-sm text-gray-500">By: {req.requester_name}</p>
                                         </div>
                                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(req.status)}`}>{req.status}</span>
                                     </div>
@@ -280,20 +280,20 @@ const DeliveriesView: React.FC<{ startChat: (user: User) => void }> = ({ startCh
     }
 
     // Resident, Store, Service Provider View
-    const myRequests = deliveryRequests.filter(d => d.requesterId === currentUser.id);
+    const myRequests = deliveryRequests.filter(d => d.requester_id === currentUser.id);
     return (
         <div className="space-y-4">
             <h1 className="text-2xl font-bold">My Delivery Requests</h1>
             {myRequests.map(req => {
-                const rider = users.find(u => u.id === req.riderId);
+                const rider = users.find(u => u.id === req.rider_id);
                 return (
                     <div key={req.id} className="bg-white p-4 rounded-lg shadow-md">
                         <div className="flex justify-between items-start">
                             <div>
                                 <p className="font-bold">{req.description}</p>
-                                <p className="text-sm text-gray-500">From: {req.pickupAddress}</p>
-                                <p className="text-sm text-gray-500">To: {req.dropoffAddress}</p>
-                                {req.riderName && <p className="text-sm text-gray-500">Rider: {req.riderName}</p>}
+                                <p className="text-sm text-gray-500">From: {req.pickup_address}</p>
+                                <p className="text-sm text-gray-500">To: {req.dropoff_address}</p>
+                                {req.rider_name && <p className="text-sm text-gray-500">Rider: {req.rider_name}</p>}
                             </div>
                             <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(req.status)}`}>{req.status}</span>
                         </div>
@@ -312,28 +312,28 @@ const DeliveriesView: React.FC<{ startChat: (user: User) => void }> = ({ startCh
 const GatePassView = () => {
     const { currentUser } = useContext(AuthContext);
     const { gatePasses, addGatePass, deliveryRequests } = useContext(DataContext);
-    const [formData, setFormData] = useState({ visitorName: '', purpose: '', visitDateTime: '' });
-    if (!currentUser) return null;
+    const [formData, setFormData] = useState({ visitor_name: '', purpose: '', visit_date_time: '' });
+    if (!currentUser || !gatePasses) return <div>Loading...</div>;
 
-    const myGatePasses = gatePasses.filter(gp => gp.residentId === currentUser.id);
+    const myGatePasses = gatePasses.filter(gp => gp.resident_id === currentUser.id);
     const pendingPasses = myGatePasses.filter(gp => gp.status === GatePassStatus.PENDING);
     const historyPasses = myGatePasses.filter(gp => gp.status !== GatePassStatus.PENDING);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.visitDateTime) {
+        if (!formData.visit_date_time) {
             alert("Please select a date and time for the visit.");
             return;
         }
         addGatePass({
-            residentId: currentUser.id,
-            residentName: currentUser.name,
-            visitorName: formData.visitorName,
-            purpose: formData.purpose,
-            visitDateTime: formData.visitDateTime,
-            visitorType: Role.RESIDENT, // Placeholder for generic visitor
+            resident_id: currentUser.id,
+            resident_name: currentUser.name,
+            ...formData,
+            visitor_type: Role.RESIDENT, // Placeholder for generic visitor
+            status: GatePassStatus.PENDING,
+            qr_code: 'pending',
         });
-        setFormData({ visitorName: '', purpose: '', visitDateTime: '' });
+        setFormData({ visitor_name: '', purpose: '', visit_date_time: '' });
     }
     
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -345,11 +345,11 @@ const GatePassView = () => {
             <div className="bg-white p-6 rounded-lg shadow-md mb-6">
                  <h2 className="text-xl font-semibold mb-4">Request a New Gate Pass</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    <input name="visitorName" type="text" placeholder="Visitor's Name" value={formData.visitorName} onChange={handleInputChange} className="w-full p-2 border rounded" required />
+                    <input name="visitor_name" type="text" placeholder="Visitor's Name" value={formData.visitor_name} onChange={handleInputChange} className="w-full p-2 border rounded" required />
                     <input name="purpose" type="text" placeholder="Purpose of Visit" value={formData.purpose} onChange={handleInputChange} className="w-full p-2 border rounded" required />
                     <div>
-                        <label htmlFor="visitDateTime" className="block text-sm font-medium text-gray-700">Date and Time of Visit</label>
-                        <input id="visitDateTime" name="visitDateTime" type="datetime-local" value={formData.visitDateTime} onChange={handleInputChange} className="w-full p-2 border rounded mt-1" required />
+                        <label htmlFor="visit_date_time" className="block text-sm font-medium text-gray-700">Date and Time of Visit</label>
+                        <input id="visit_date_time" name="visit_date_time" type="datetime-local" value={formData.visit_date_time} onChange={handleInputChange} className="w-full p-2 border rounded mt-1" required />
                     </div>
                     <button type="submit" className="bg-brand-primary text-white px-4 py-2 rounded-lg font-semibold">Submit Request</button>
                 </form>
@@ -360,9 +360,9 @@ const GatePassView = () => {
                 <div className="space-y-4">
                     {pendingPasses.map(gp => (
                         <div key={gp.id} className="bg-white p-4 rounded-lg shadow-md">
-                           <p className="font-bold">{gp.visitorName}</p>
+                           <p className="font-bold">{gp.visitor_name}</p>
                            <p className="text-sm text-gray-500">{gp.purpose}</p>
-                           <p className="text-xs text-gray-400 mt-1">{new Date(gp.visitDateTime).toLocaleString()}</p>
+                           <p className="text-xs text-gray-400 mt-1">{new Date(gp.visit_date_time).toLocaleString()}</p>
                            <span className={`mt-2 inline-block px-2 py-1 text-xs font-semibold rounded-full ${getGatePassStatusClass(gp.status)}`}>{gp.status}</span>
                         </div>
                     ))}
@@ -373,14 +373,14 @@ const GatePassView = () => {
                 <h2 className="text-xl font-semibold mb-4">Gate Pass History</h2>
                 <div className="space-y-4">
                     {historyPasses.map(gp => {
-                        const linkedDelivery = gp.linkedDeliveryId ? deliveryRequests.find(d => d.id === gp.linkedDeliveryId) : null;
+                        const linkedDelivery = gp.linked_delivery_id ? deliveryRequests.find(d => d.id === gp.linked_delivery_id) : null;
                         return (
                             <div key={gp.id} className="bg-white p-4 rounded-lg shadow-md">
                                 <div className="flex justify-between items-start">
                                     <div>
-                                       <p className="font-bold">{gp.visitorName}</p>
+                                       <p className="font-bold">{gp.visitor_name}</p>
                                        <p className="text-sm text-gray-500">{gp.purpose}</p>
-                                       <p className="text-xs text-gray-400 mt-1">{new Date(gp.visitDateTime).toLocaleString()}</p>
+                                       <p className="text-xs text-gray-400 mt-1">{new Date(gp.visit_date_time).toLocaleString()}</p>
                                     </div>
                                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getGatePassStatusClass(gp.status)}`}>{gp.status}</span>
                                </div>
@@ -407,23 +407,24 @@ const GatePassView = () => {
 const RequestRiderView = () => {
     const { currentUser } = useContext(AuthContext);
     const { addDeliveryRequest, deliveryRequests } = useContext(DataContext);
-    const [formData, setFormData] = useState({ pickupAddress: currentUser?.address || '', dropoffAddress: '', description: '' });
-    if (!currentUser) return null;
+    const [formData, setFormData] = useState({ pickup_address: currentUser?.address || '', dropoff_address: '', description: '' });
+    if (!currentUser || !deliveryRequests) return <div>Loading...</div>;
 
-    const myRequests = deliveryRequests.filter(d => d.requesterId === currentUser.id);
+    const myRequests = deliveryRequests.filter(d => d.requester_id === currentUser.id);
     
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         addDeliveryRequest({
-            requesterId: currentUser.id,
-            requesterName: currentUser.name,
-            pickupAddress: formData.pickupAddress,
-            dropoffAddress: formData.dropoffAddress,
+            requester_id: currentUser.id,
+            requester_name: currentUser.name,
+            pickup_address: formData.pickup_address,
+            dropoff_address: formData.dropoff_address,
             description: formData.description,
-            pickupLat: currentUser.lat,
-            pickupLng: currentUser.lng,
+            pickup_lat: currentUser.lat,
+            pickup_lng: currentUser.lng,
+            status: DeliveryStatus.PENDING,
         });
-        setFormData({ pickupAddress: currentUser.address || '', dropoffAddress: '', description: '' });
+        setFormData({ pickup_address: currentUser.address || '', dropoff_address: '', description: '' });
     };
 
     return (
@@ -431,8 +432,8 @@ const RequestRiderView = () => {
             <div className="bg-white p-6 rounded-lg shadow-md mb-6">
                 <h2 className="text-xl font-semibold mb-4">Request a Rider</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
-                     <textarea placeholder="Pickup Address" value={formData.pickupAddress} onChange={e => setFormData({...formData, pickupAddress: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
-                     <textarea placeholder="Drop-off Address" value={formData.dropoffAddress} onChange={e => setFormData({...formData, dropoffAddress: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
+                     <textarea placeholder="Pickup Address" value={formData.pickup_address} onChange={e => setFormData({...formData, pickup_address: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
+                     <textarea placeholder="Drop-off Address" value={formData.dropoff_address} onChange={e => setFormData({...formData, dropoff_address: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
                      <textarea placeholder="Delivery Instructions" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full p-2 border rounded" required rows={3}/>
                     <button type="submit" className="bg-brand-primary text-white px-4 py-2 rounded-lg font-semibold">Submit Request</button>
                 </form>
@@ -445,7 +446,7 @@ const RequestRiderView = () => {
                            <div className="flex justify-between items-start">
                                 <div>
                                     <p className="font-bold">{req.description}</p>
-                                    <p className="text-sm text-gray-500">To: {req.dropoffAddress}</p>
+                                    <p className="text-sm text-gray-500">To: {req.dropoff_address}</p>
                                 </div>
                                 <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(req.status)}`}>{req.status}</span>
                             </div>
@@ -461,14 +462,14 @@ const DirectoryView: React.FC<{ directory: 'stores' | 'services' | 'riders' | nu
     const { currentUser } = useContext(AuthContext);
     const { users, addDeliveryRequest, addGatePass } = useContext(DataContext);
     const [requestModalOpen, setRequestModalOpen] = useState(false);
-    const [selectedRider, setSelectedRider] = useState<RiderUser | null>(null);
+    const [selectedRider, setSelectedRider] = useState<User | null>(null);
 
-    if (!directory || !currentUser) return null;
+    if (!directory || !currentUser || !users) return <div>Loading...</div>;
 
     const roleMap = { stores: Role.STORE, services: Role.SERVICE_PROVIDER, riders: Role.DISPATCH_RIDER };
     const titleMap = { stores: 'Stores', services: 'Service Providers', riders: 'Dispatch Riders' };
 
-    const directoryUsers = users.filter(u => u.role === roleMap[directory] && u.approvalStatus === ApprovalStatus.APPROVED);
+    const directoryUsers = users.filter(u => u.role === roleMap[directory] && u.approval_status === ApprovalStatus.APPROVED);
 
     if (directory === 'riders') {
         directoryUsers.sort((a, b) => {
@@ -491,7 +492,7 @@ const DirectoryView: React.FC<{ directory: 'stores' | 'services' | 'riders' | nu
             <h1 className="text-2xl font-bold mb-4">{titleMap[directory]}</h1>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {directoryUsers.map(user => {
-                     if (user.role === Role.DISPATCH_RIDER && !user.isOnline) return null; // Hide offline riders
+                     if (user.role === Role.DISPATCH_RIDER && !user.is_online) return null; // Hide offline riders
                      
                      const distance = user.role === Role.DISPATCH_RIDER ? haversineDistance(currentUser.lat, currentUser.lng, user.lat, user.lng).toFixed(2) : null;
                      const rating = user.role === Role.DISPATCH_RIDER ? user.rating : null;
@@ -499,13 +500,13 @@ const DirectoryView: React.FC<{ directory: 'stores' | 'services' | 'riders' | nu
                      return (
                         <div key={user.id} className="bg-white p-4 rounded-lg shadow-md">
                             <div className="flex items-center space-x-4">
-                                <img src={user.photoUrl} alt={user.name} className="h-16 w-16 rounded-full object-cover"/>
+                                <img src={user.photo_url} alt={user.name} className="h-16 w-16 rounded-full object-cover"/>
                                 <div className="flex-1">
                                     <div className="flex justify-between items-start">
-                                        <p className="font-bold pr-2">{ 'businessName' in user && user.businessName ? user.businessName : user.name}</p>
+                                        <p className="font-bold pr-2">{ user.business_name ? user.business_name : user.name}</p>
                                         {(user.role === Role.STORE || user.role === Role.SERVICE_PROVIDER || user.role === Role.DISPATCH_RIDER) && (
-                                            <span className={`flex-shrink-0 px-2 py-0.5 text-xs font-semibold rounded-full ${user.operatesOutsideEstate ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
-                                                {user.operatesOutsideEstate ? 'Outside Estate' : 'Inside Estate'}
+                                            <span className={`flex-shrink-0 px-2 py-0.5 text-xs font-semibold rounded-full ${user.operates_outside_estate ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
+                                                {user.operates_outside_estate ? 'Outside Estate' : 'Inside Estate'}
                                             </span>
                                         )}
                                     </div>
@@ -538,50 +539,55 @@ const DirectoryView: React.FC<{ directory: 'stores' | 'services' | 'riders' | nu
 };
 
 const RequestRiderModal: React.FC<{
-    rider: RiderUser;
+    rider: User;
     onClose: () => void;
     currentUser: User;
-    addDeliveryRequest: (req: Omit<DeliveryRequest, 'id' | 'createdAt' | 'status'> & { status?: DeliveryStatus }) => DeliveryRequest;
-    addGatePass: (gp: Omit<GatePass, 'id' | 'status' | 'qrCode'>) => GatePass;
+    addDeliveryRequest: (req: Partial<DeliveryRequest>) => Promise<DeliveryRequest | null>;
+    addGatePass: (gp: Partial<GatePass>) => Promise<GatePass | null>;
 }> = ({ rider, onClose, currentUser, addDeliveryRequest, addGatePass }) => {
-    const [formData, setFormData] = useState({ pickupAddress: currentUser.address, dropoffAddress: '', description: '' });
+    const [formData, setFormData] = useState({ pickup_address: currentUser.address, dropoff_address: '', description: '' });
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         
-        if (rider.operatesOutsideEstate) {
+        if (rider.operates_outside_estate) {
             // Create the delivery request first to get its ID
-            const newDelivery = addDeliveryRequest({
-                requesterId: currentUser.id,
-                requesterName: currentUser.name,
+            const newDelivery = await addDeliveryRequest({
+                requester_id: currentUser.id,
+                requester_name: currentUser.name,
                 ...formData,
                 status: DeliveryStatus.AWAITING_GATE_PASS,
-                pickupLat: currentUser.lat,
-                pickupLng: currentUser.lng,
+                pickup_lat: currentUser.lat,
+                pickup_lng: currentUser.lng,
             });
 
-            // Now create the gate pass and link it in one step
-            addGatePass({
-                residentId: currentUser.id,
-                residentName: currentUser.name,
-                visitorName: rider.name,
-                visitorType: rider.role,
-                purpose: `Delivery pickup for job #${newDelivery.id}`,
-                targetVisitorId: rider.id,
-                visitDateTime: new Date().toISOString(), // Immediate request
-                linkedDeliveryId: newDelivery.id // Link it here
-            });
+            if(newDelivery) {
+                // Now create the gate pass and link it in one step
+                await addGatePass({
+                    resident_id: currentUser.id,
+                    resident_name: currentUser.name,
+                    visitor_name: rider.name,
+                    visitor_type: rider.role,
+                    purpose: `Delivery pickup for job #${newDelivery.id}`,
+                    target_visitor_id: rider.id,
+                    visit_date_time: new Date().toISOString(), // Immediate request
+                    linked_delivery_id: newDelivery.id, // Link it here
+                    status: GatePassStatus.PENDING,
+                    qr_code: 'pending',
+                });
+            }
             
             alert('Gate pass requested for external rider. Delivery will be dispatched upon admin approval.');
         } else {
-             addDeliveryRequest({
-                requesterId: currentUser.id,
-                requesterName: currentUser.name,
+             await addDeliveryRequest({
+                requester_id: currentUser.id,
+                requester_name: currentUser.name,
                 ...formData,
-                pickupLat: currentUser.lat,
-                pickupLng: currentUser.lng,
-                riderId: rider.id, // Assign directly
-                riderName: rider.name,
+                pickup_lat: currentUser.lat,
+                pickup_lng: currentUser.lng,
+                rider_id: rider.id, // Assign directly
+                rider_name: rider.name,
+                status: DeliveryStatus.PENDING,
             });
             alert('Request sent to rider!');
         }
@@ -594,8 +600,8 @@ const RequestRiderModal: React.FC<{
             <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
                 <h3 className="text-xl font-bold mb-4">Request {rider.name}</h3>
                  <form onSubmit={handleSubmit} className="space-y-4">
-                     <textarea placeholder="Pickup Address" value={formData.pickupAddress} onChange={e => setFormData({...formData, pickupAddress: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
-                     <textarea placeholder="Drop-off Address" value={formData.dropoffAddress} onChange={e => setFormData({...formData, dropoffAddress: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
+                     <textarea placeholder="Pickup Address" value={formData.pickup_address} onChange={e => setFormData({...formData, pickup_address: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
+                     <textarea placeholder="Drop-off Address" value={formData.dropoff_address} onChange={e => setFormData({...formData, dropoff_address: e.target.value})} className="w-full p-2 border rounded" required rows={2}/>
                      <textarea placeholder="Delivery Instructions" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full p-2 border rounded" required rows={3}/>
                     <div className="flex justify-end space-x-2">
                         <button type="button" onClick={onClose} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg font-semibold">Cancel</button>
@@ -613,54 +619,63 @@ const RequestGatePassModal: React.FC<{
 }> = ({ visitor, onClose }) => {
     const { currentUser } = useContext(AuthContext);
     const { addGatePass, addDeliveryRequest, updateGatePass } = useContext(DataContext);
-    const [formData, setFormData] = useState({ purpose: '', visitDateTime: '' });
+    const [formData, setFormData] = useState({ purpose: '', visit_date_time: '' });
     const [isForDelivery, setIsForDelivery] = useState(false);
-    const [deliveryData, setDeliveryData] = useState({ dropoffAddress: '', description: '' });
+    const [deliveryData, setDeliveryData] = useState({ dropoff_address: '', description: '' });
 
     if (!currentUser) return null;
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.visitDateTime || !formData.purpose) {
+        if (!formData.visit_date_time) {
             alert("Please fill all fields.");
             return;
         }
 
-        const visitorName = ('businessName' in visitor && visitor.businessName) ? visitor.businessName : visitor.name;
+        const visitorName = visitor.business_name || visitor.name;
 
         if (isForDelivery) {
-            const newDelivery = addDeliveryRequest({
-                requesterId: currentUser.id,
-                requesterName: currentUser.name,
-                pickupAddress: visitor.address,
-                dropoffAddress: deliveryData.dropoffAddress,
+            const newDelivery = await addDeliveryRequest({
+                requester_id: currentUser.id,
+                requester_name: currentUser.name,
+                pickup_address: visitor.address,
+                dropoff_address: deliveryData.dropoff_address,
                 description: deliveryData.description,
                 status: DeliveryStatus.AWAITING_GATE_PASS,
-                pickupLat: visitor.lat,
-                pickupLng: visitor.lng,
+                pickup_lat: visitor.lat,
+                pickup_lng: visitor.lng,
             });
 
-            const newGatePass = addGatePass({
-                residentId: currentUser.id,
-                residentName: currentUser.name,
-                visitorName: visitorName,
-                visitorType: visitor.role,
-                purpose: `Delivery from ${visitorName}: ${deliveryData.description}`,
-                visitDateTime: formData.visitDateTime,
-                targetVisitorId: visitor.id,
-            });
-            updateGatePass({ ...newGatePass, linkedDeliveryId: newDelivery.id });
+            if(newDelivery) {
+                const newGatePass = await addGatePass({
+                    resident_id: currentUser.id,
+                    resident_name: currentUser.name,
+                    visitor_name: visitorName,
+                    visitor_type: visitor.role,
+                    purpose: `Delivery from ${visitorName}: ${deliveryData.description}`,
+                    visit_date_time: formData.visit_date_time,
+                    target_visitor_id: visitor.id,
+                    status: GatePassStatus.PENDING,
+                    qr_code: 'pending',
+                });
+
+                if(newGatePass) {
+                    await updateGatePass({ ...newGatePass, linked_delivery_id: newDelivery.id });
+                }
+            }
             alert('Gate pass and delivery request submitted for admin approval.');
 
         } else {
-             addGatePass({
-                residentId: currentUser.id,
-                residentName: currentUser.name,
-                visitorName: visitorName,
-                visitorType: visitor.role,
+             await addGatePass({
+                resident_id: currentUser.id,
+                resident_name: currentUser.name,
+                visitor_name: visitorName,
+                visitor_type: visitor.role,
                 purpose: formData.purpose,
-                visitDateTime: formData.visitDateTime,
-                targetVisitorId: visitor.id,
+                visit_date_time: formData.visit_date_time,
+                target_visitor_id: visitor.id,
+                status: GatePassStatus.PENDING,
+                qr_code: 'pending',
             });
             alert('Gate pass request submitted for admin approval.');
         }
@@ -672,7 +687,7 @@ const RequestGatePassModal: React.FC<{
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-4">Request Gate Pass for {('businessName' in visitor && visitor.businessName) ? visitor.businessName : visitor.name}</h3>
+                <h3 className="text-xl font-bold mb-4">Request Gate Pass for {visitor.business_name || visitor.name}</h3>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="flex items-start">
                         <div className="flex items-center h-5">
@@ -691,7 +706,7 @@ const RequestGatePassModal: React.FC<{
                             </div>
                              <div>
                                 <label className="block text-sm font-medium text-gray-700">Drop-off Address</label>
-                                <textarea value={deliveryData.dropoffAddress} onChange={e => setDeliveryData({...deliveryData, dropoffAddress: e.target.value})} className="w-full p-2 border rounded mt-1" required rows={2}/>
+                                <textarea value={deliveryData.dropoff_address} onChange={e => setDeliveryData({...deliveryData, dropoff_address: e.target.value})} className="w-full p-2 border rounded mt-1" required rows={2}/>
                             </div>
                         </>
                     ) : (
@@ -703,7 +718,7 @@ const RequestGatePassModal: React.FC<{
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Date and Time of Visit/Delivery</label>
-                        <input type="datetime-local" value={formData.visitDateTime} onChange={e => setFormData({ ...formData, visitDateTime: e.target.value })} className="w-full p-2 border rounded mt-1" required />
+                        <input type="datetime-local" value={formData.visit_date_time} onChange={e => setFormData({ ...formData, visit_date_time: e.target.value })} className="w-full p-2 border rounded mt-1" required />
                     </div>
                     <div className="flex justify-end space-x-2">
                         <button type="button" onClick={onClose} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg font-semibold">Cancel</button>
@@ -724,25 +739,25 @@ const DirectoryProfileView: React.FC<{ user: User | null, startChat: (user: User
 
     const showRequestGatePassButton = currentUser.role === Role.RESIDENT &&
         (user.role === Role.STORE || user.role === Role.SERVICE_PROVIDER) &&
-        user.operatesOutsideEstate;
+        user.operates_outside_estate;
 
     return (
         <>
             <div className="bg-white p-6 rounded-lg shadow-md">
                 <div className="flex items-center space-x-4 mb-4">
-                    <img src={user.photoUrl} alt={user.name} className="h-20 w-20 rounded-full object-cover"/>
+                    <img src={user.photo_url} alt={user.name} className="h-20 w-20 rounded-full object-cover"/>
                     <div>
-                        <h1 className="text-2xl font-bold">{ 'businessName' in user && user.businessName ? user.businessName : user.name}</h1>
+                        <h1 className="text-2xl font-bold">{ user.business_name || user.name}</h1>
                         <p className="text-gray-600 mb-2">{user.role}</p>
                     </div>
                 </div>
                 <div className="space-y-2">
                     <p><strong>Contact:</strong> {user.phone}</p>
                     <p><strong>Address:</strong> {user.address}</p>
-                    {'hoursOfOperation' in user && <p><strong>Hours:</strong> {user.hoursOfOperation}</p>}
+                    {user.hours_of_operation && <p><strong>Hours:</strong> {user.hours_of_operation}</p>}
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
-                    <button onClick={() => startChat(user)} className="bg-brand-primary text-white px-4 py-2 rounded-lg font-semibold">Chat with { 'businessName' in user && user.businessName ? user.businessName.split(' ')[0] : user.name.split(' ')[0]}</button>
+                    <button onClick={() => startChat(user)} className="bg-brand-primary text-white px-4 py-2 rounded-lg font-semibold">Chat with { (user.business_name || user.name).split(' ')[0]}</button>
                     {showRequestGatePassButton && (
                         <button onClick={() => setIsGatePassModalOpen(true)} className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold">Request Gate Pass</button>
                     )}
@@ -765,9 +780,9 @@ const ChatView: React.FC<{
 }> = ({ activeConversation, setActiveConversation, startChat }) => {
     const { currentUser } = useContext(AuthContext);
     const { conversations, messages, users, markConversationAsRead } = useContext(DataContext);
-    if (!currentUser) return null;
+    if (!currentUser || !conversations) return <div>Loading chats...</div>;
 
-    const myConversations = conversations.filter(c => c.participantIds.includes(currentUser.id));
+    const myConversations = conversations.filter(c => c.participant_ids.includes(currentUser.id));
     
     useEffect(() => {
         if (activeConversation) {
@@ -782,19 +797,19 @@ const ChatView: React.FC<{
                 <div className="p-4 border-b font-bold text-lg">Conversations</div>
                 <div className="overflow-y-auto h-[calc(100%-4rem)]">
                     {myConversations.map(conv => {
-                        const otherUserId = conv.participantIds.find(id => id !== currentUser.id);
+                        const otherUserId = conv.participant_ids.find(id => id !== currentUser.id);
                         const otherUser = users.find(u => u.id === otherUserId);
-                        const unreadCount = messages.filter(m => m.conversationId === conv.id && m.receiverId === currentUser.id && !m.read).length;
+                        const unreadCount = messages.filter(m => m.conversation_id === conv.id && m.receiver_id === currentUser.id && !m.read).length;
                         return (
                              <div key={conv.id} onClick={() => setActiveConversation(conv)} className={`p-4 flex items-center space-x-3 cursor-pointer hover:bg-gray-50 ${activeConversation?.id === conv.id && 'bg-teal-50'}`}>
-                                <img src={otherUser?.photoUrl} alt={otherUser?.name} className="h-12 w-12 rounded-full object-cover"/>
+                                <img src={otherUser?.photo_url} alt={otherUser?.name} className="h-12 w-12 rounded-full object-cover"/>
                                 <div className="flex-1">
                                     <div className="flex justify-between">
                                         <p className="font-semibold">{otherUser?.name}</p>
-                                        <p className="text-xs text-gray-500">{formatTime(conv.lastMessage.timestamp)}</p>
+                                        <p className="text-xs text-gray-500">{formatTime(conv.last_message_timestamp)}</p>
                                     </div>
                                     <div className="flex justify-between">
-                                        <p className="text-sm text-gray-600 truncate">{conv.lastMessage.text}</p>
+                                        <p className="text-sm text-gray-600 truncate">{conv.last_message_text}</p>
                                         {unreadCount > 0 && <span className="bg-green-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">{unreadCount}</span>}
                                     </div>
                                 </div>
@@ -826,10 +841,10 @@ const MessageView: React.FC<{ conversation: Conversation, onBack: () => void }> 
 
     if (!currentUser) return null;
 
-    const otherUserId = conversation.participantIds.find(id => id !== currentUser.id);
+    const otherUserId = conversation.participant_ids.find(id => id !== currentUser.id);
     if (!otherUserId) return null; // Handle case where other user is not found
     const otherUser = users.find(u => u.id === otherUserId);
-    const conversationMessages = messages.filter(m => m.conversationId === conversation.id);
+    const conversationMessages = messages.filter(m => m.conversation_id === conversation.id);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -847,9 +862,9 @@ const MessageView: React.FC<{ conversation: Conversation, onBack: () => void }> 
         e.preventDefault();
         if (newMessage.trim() === '' || !otherUser) return;
         addMessage({
-            conversationId: conversation.id,
-            senderId: currentUser.id,
-            receiverId: otherUser.id,
+            conversation_id: conversation.id,
+            sender_id: currentUser.id,
+            receiver_id: otherUser.id,
             text: newMessage.trim(),
         });
         setNewMessage('');
@@ -866,12 +881,12 @@ const MessageView: React.FC<{ conversation: Conversation, onBack: () => void }> 
         <>
             <div className="p-4 border-b flex items-center space-x-3">
                 <button onClick={onBack} className="md:hidden mr-2 p-1 rounded-full hover:bg-gray-100"> &lt; </button>
-                <img src={otherUser?.photoUrl} alt={otherUser?.name} className="h-10 w-10 rounded-full object-cover"/>
+                <img src={otherUser?.photo_url} alt={otherUser?.name} className="h-10 w-10 rounded-full object-cover"/>
                 <span className="font-semibold">{otherUser?.name}</span>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                  {conversationMessages.map((msg, index) => {
-                    const isMe = msg.senderId === currentUser.id;
+                    const isMe = msg.sender_id === currentUser.id;
                     const lastMessage = conversationMessages[index-1];
                     const showTimestamp = !lastMessage || new Date(msg.timestamp).getTime() - new Date(lastMessage.timestamp).getTime() > 60000 * 5;
 
@@ -918,37 +933,59 @@ const ProfileView = () => {
     const { currentUser } = useContext(AuthContext);
     const { updateUser } = useContext(DataContext);
     const [isEditing, setIsEditing] = useState(false);
-    const [formData, setFormData] = useState(currentUser);
+    const [formData, setFormData] = useState<User | null>(currentUser);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+    const [photoFile, setPhotoFile] = useState<File | null>(null);
 
     if (!currentUser || !formData) return null;
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
+        setFormData({ ...formData, [e.target.name]: e.target.value } as User);
     }
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
+            setPhotoFile(file);
             const reader = new FileReader();
             reader.onloadend = () => {
                 setPhotoPreview(reader.result as string);
-                 setFormData({ ...formData, photoUrl: reader.result as string });
             };
             reader.readAsDataURL(file);
         }
     }
     
-    const handleSave = () => {
-        updateUser(formData);
+    const handleSave = async () => {
+        if (!formData) return;
+        
+        let updatedUserData = { ...formData };
+        
+        if (photoFile) {
+            const filePath = `${currentUser.id}/photo_${photoFile.name}`;
+            const { error: uploadError } = await supabase.storage
+                .from('user_assets')
+                .upload(filePath, photoFile, { upsert: true });
+
+            if (uploadError) {
+                console.error("Error uploading photo:", uploadError);
+                alert("Failed to upload new profile picture.");
+                return;
+            }
+
+            const { data: { publicUrl } } = supabase.storage.from('user_assets').getPublicUrl(filePath);
+            updatedUserData.photo_url = publicUrl;
+        }
+
+        await updateUser(updatedUserData);
         setIsEditing(false);
         setPhotoPreview(null);
+        setPhotoFile(null);
     }
 
     const handleToggleAvailability = () => {
         if (formData.role === Role.DISPATCH_RIDER) {
-            const newStatus = !('isOnline' in formData && formData.isOnline);
-            const updatedUser = { ...formData, isOnline: newStatus };
+            const newStatus = !formData.is_online;
+            const updatedUser = { ...formData, is_online: newStatus };
             setFormData(updatedUser);
             updateUser(updatedUser);
         }
@@ -964,7 +1001,7 @@ const ProfileView = () => {
             {isEditing ? (
                  <div className="space-y-4">
                     <div className="flex items-center space-x-4">
-                        <img src={photoPreview || formData.photoUrl} alt="Profile" className="h-20 w-20 rounded-full object-cover"/>
+                        <img src={photoPreview || formData.photo_url} alt="Profile" className="h-20 w-20 rounded-full object-cover"/>
                         <input type="file" onChange={handleFileChange} className="text-sm" />
                     </div>
                      <input name="name" value={formData.name} onChange={handleInputChange} className="w-full p-2 border rounded" />
@@ -978,7 +1015,7 @@ const ProfileView = () => {
             ) : (
                 <div className="space-y-4">
                     <div className="flex items-center space-x-4">
-                        <img src={currentUser.photoUrl} alt={currentUser.name} className="h-20 w-20 rounded-full object-cover"/>
+                        <img src={currentUser.photo_url} alt={currentUser.name} className="h-20 w-20 rounded-full object-cover"/>
                         <div>
                             <p className="text-xl font-bold">{currentUser.name}</p>
                             <p className="text-gray-600">{currentUser.role}</p>
@@ -988,14 +1025,14 @@ const ProfileView = () => {
                      <p><strong>Phone:</strong> {currentUser.phone}</p>
                      <p><strong>Address:</strong> {currentUser.address}</p>
                      
-                     {currentUser.role === Role.DISPATCH_RIDER && 'isOnline' in currentUser && (
+                     {currentUser.role === Role.DISPATCH_RIDER && (
                         <div className="flex items-center space-x-3">
                             <label className="font-semibold">Availability:</label>
-                            <button onClick={handleToggleAvailability} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${currentUser.isOnline ? 'bg-green-500' : 'bg-gray-300'}`}>
-                                <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${currentUser.isOnline ? 'translate-x-6' : 'translate-x-1'}`}/>
+                            <button onClick={handleToggleAvailability} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${currentUser.is_online ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${currentUser.is_online ? 'translate-x-6' : 'translate-x-1'}`}/>
                             </button>
-                            <span className={`font-semibold ${currentUser.isOnline ? 'text-green-600' : 'text-gray-500'}`}>
-                                {currentUser.isOnline ? 'Online' : 'Offline'}
+                            <span className={`font-semibold ${currentUser.is_online ? 'text-green-600' : 'text-gray-500'}`}>
+                                {currentUser.is_online ? 'Online' : 'Offline'}
                             </span>
                         </div>
                      )}
